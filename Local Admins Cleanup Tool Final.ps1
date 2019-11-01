@@ -1,9 +1,10 @@
-﻿#Pulls all localadmins on remote server
-#Drops them in a new Standard ad group (GRP_ServerName_Admin)
+﻿#Pulls all localadmins from remote server
+#Drops them in a new Standard AD group in your Security Groups OU (GRP_ServerName_Admin)
 #Adds new group to server's local admins
 #removes individually added domain users
+#Drops 'Domain Users' from anything that might have it
 
-$servers = Import-Csv "\\hqsvr01\ADSSPR\servers.csv"
+$servers = Import-Csv "\\Path\To\ServerList.csv"
 
 foreach ($server in $servers) {
   #assemble group name for DC and create it
@@ -15,7 +16,8 @@ foreach ($server in $servers) {
 
   #assemble group name for RC & Add to Local Admins
   Invoke-Command -ComputerName $name -ScriptBlock {
-
+  
+  #check if LocalAccounts module exists, if not grab it from a share
   $modtest = Test-Path -Path "C:\Windows\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.LocalAccounts"
     
     if ($modtest -eq $true){
@@ -27,14 +29,15 @@ foreach ($server in $servers) {
         "LocalAccounts module not found, copying module from hqsvr... "
         cd C:\Windows\System32\WindowsPowerShell\v1.0\Modules
         mkdir Microsoft.PowerShell.LocalAccounts
-        xcopy "\\hqsvr01\ADSSPR\Microsoft.PowerShell.LocalAccounts" "C:\Windows\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.LocalAccounts"
+        xcopy "\\Path\To\Share\Microsoft.PowerShell.LocalAccounts" "C:\Windows\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.LocalAccounts"
         import-module Microsoft.PowerShell.LocalAccounts
     }
     
     $name = $env:COMPUTERNAME
     $grpname = -join ("GRP_","$name","_Admin")
     $grpname1 = -join ("USCOLD\","$grpname")
-
+    
+    #now the remote server nees to see the new AD group, quickest is via a retry
     #keep retrying group add until it becomes available (usually takes ~1-2min)
     $count = 0
     do {
@@ -114,7 +117,7 @@ foreach ($server in $servers) {
     "Added user $split to $grpname"
   }
 
-  #get local admins on RC, running on RC
+  #get local admins on server 
   Invoke-Command -ComputerName $name -ScriptBlock {
     $name = $env:COMPUTERNAME
     $grpname = -join ("GRP_","$name","_Admin")
@@ -128,7 +131,7 @@ foreach ($server in $servers) {
     $fusers = $users | Where-Object { $_ -match "USCOLD" -and $_ -notmatch "Domain Admins" -and $_ -notmatch "Server Operators" -and $_ -notmatch "Administrator" -and $_ -notmatch "$grpname1" -and $_ -notmatch "$grpname" }
 
     foreach ($fuser in $fusers) {
-      #remove users from RC's local admin"
+      #remove users from server's local admin"
       "Removing $fuser from local administrators"
       $split = $fuser.Substring($fuser.IndexOf('/') + 1)
       Remove-LocalGroupMember -Group "Administrators" -Member "$split"
